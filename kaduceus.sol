@@ -1,6 +1,24 @@
 //SPDX-License-Identifier: UNLICENSED
 pragma solidity >=0.5.0 < 0.9.0;
-//Coded by Rodrigo Alves Costa -> aka P1not
+
+/*Rules of the contract:
+    1)Only the employee or the branch or the company in the service can change the EMPLOYEE in the service for another EMPLOYEE OF THE BRANCH AND COMPANY AND BRANCH OF THE SERVICE
+    2)Only the branch or the company in the service can change the BRANCH in the service for another BRANCH OF THE COMPANY IN THE SERVICE 
+    3)Only the company in the service can change the Company in the service for another COMPANY IN THIS CONTRACT 
+    4)updateService can't be used if any value of the service has been paid
+    5)refundedAmount will never be > amontPaid
+    6)only the branch or the company of the service can refund the customer of the service
+    7)only paid services can refund
+    8)services with amountpaid !=0 can't me canceled -> rever! antes de cancelar tenho quer verificar em que momento √© previsto o pagamento E a situa√ß√£o atual do pagamento
+    //s√≥ pode pagar servi√ßos aguardandoPagamento e n√£o cancelado e servi√ßo autorizado e refundedAmount = 0 e n√£o totalmente pago e o valor totalPago + valor recebido no pagamento atual n√£o pode ultrapassar o valor do servi√ßo 
+    //s√≥ pode aguardar pagamento servi√ßos autorizados
+    //s√≥ a branch do servi√ßo pode autorizar o servi√ßo
+    5)O estorno ser√° tratado em fun√ß√£o separada
+    O cancelamento ser√° tratado em fun√ß√£o separada
+    ao lan√ßar um reembolso, incrementa o valor pago no refundedAmount do servi√ßo 
+*/
+
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v4.7/contracts/utils/math/SafeMath.sol"; 
 
 contract ServiceProvision {
     uint256 public companyCounter;
@@ -10,13 +28,19 @@ contract ServiceProvision {
 
     struct Company{
         string extCompanyCode;
-        address companyWallet;
+        address payable companyWallet;
+        string tokenName;
+        bool useToke;
+        bool payYields;
+        uint256 payEveryXDays;
+        bool branchsCanReceivePayment;
     }
 
     struct Branch{
         string extBranchCode;
-        address branchWallet;
+        address payable branchWallet;
         address companyWallet;
+        bool receivePayments;
     }
 
     struct Employee{
@@ -26,13 +50,14 @@ contract ServiceProvision {
         address companyWallet;
     }
 
-    //sequence dos serviÁos
+    //sequence dos servi√ßos
     uint256 private sqService = 0;
 
     function getNextSqServiceId() private returns (uint256) {
         return ++sqService;
     }
 
+    //Os steps do atendimento do servi√ßo ser√£o controlados atrav√©s de seus atributos 
     struct Service{
         uint256 serviceId;
         string extServiceCode;
@@ -40,57 +65,73 @@ contract ServiceProvision {
         address branchWallet;
         address companyWallet;
         address customerWallet;
+        string [] paidAfterBeforeExecution;
         string requestDate;
         string scheduledDate;
+        bool autorizedForExecution;
+        bool executed;       
         string status;
         string obs;
         uint price;
         bool waitingPayment;
-        string paidDate;
+        uint amontPaid;
+        uint refundedAmount;
+        bool fullyPaid;
+        string payday;
+        bool canceled;
     }
 
-    address private immutable owner;
- 
-    constructor() {
-        owner = msg.sender;
+     struct Reimbursement{
+        uint256 serviceId;  //have to reference a existing service
+        uint value;
+        address sender;
     }
 
+    address payable private immutable owner;
+    string contractToken = "MSYS";  //Will be used as reference for the airdrop of the balance of this contract
+    uint256 payEveryXDays;
+
+    constructor () { 
+        owner = payable(msg.sender);
+    } 
+
+    mapping(address => address) internal authorizedUsers;
     mapping(address => Company) internal companys;
     mapping(address => Branch) internal branchs;
     mapping(address => Employee) internal employees;
     mapping(uint256 => Service) internal services;
     // Employee[] public employees;
 
-    modifier onlyOwner(){
-        require(msg.sender == owner);
+    modifier onlyAuthorizedUsers(){
+        require(msg.sender == authorizedUsers[msg.sender]);
         _;
     }
 
-    modifier verificaPermissaoCancela(){
-        require(msg.sender == owner);
-        _;
-    }
+    // modifier verificaPermissaoCancela(){
+    //     require(msg.sender == address);
+    //     _;
+    // }
 
     //Only the owner can add a Company
-    function addCompany(string calldata _extCompanyCode, address _companyWallet) external onlyOwner {
-        //Verifica se o _companyWallet j· foi cadastrado em alguma outra estrutura        
+    function addCompany(string calldata _extCompanyCode, address _companyWallet) external onlyAuthorizedUsers {
+        //Verifica se o _companyWallet j√° foi cadastrado em alguma outra estrutura        
         require(companys[_companyWallet].companyWallet != _companyWallet, "Company address already registered.");
         require(branchs[_companyWallet].branchWallet != _companyWallet, "Company address already registered as a branch.");
         require(employees[_companyWallet].employeeWallet != _companyWallet, "Company address already registered as an employee.");
         //require(services[_companyWallet].customerWallet != _companyWallet, "Company address already registered as a customer.");
         // companys[_companyWallet].push(Company(id, _extCompanyId, _extCompanyCode, _companyWallet, block.timestamp)); 
         companys[_companyWallet].extCompanyCode = _extCompanyCode;
-        companys[_companyWallet].companyWallet = _companyWallet;
+        companys[_companyWallet].companyWallet = payable(_companyWallet);
         companyCounter++;
     }
 
-    //Only the Company can add a Branch
+    //Only the Company can add/update a Branch
     function addBranch(string calldata _extBranchCode, address _branchWallet, address _companyWallet) external {
         //Verifica se o branch vai ser registrado para a companhia do sender
         require(msg.sender == _companyWallet, "The sender must be equal the company wallet");
-        //Verifica se o sender È uma companhia
+        //Verifica se o sender √© uma companhia
         require(companys[msg.sender].companyWallet == _companyWallet, "Only the company can add a branch.");
-        //Verifica se o _branchWallet j· foi cadastrado em alguma estrutura
+        //Verifica se o _branchWallet j√° foi cadastrado em alguma estrutura
         require(companys[_branchWallet].companyWallet != _branchWallet, "Branch address already registered as a Company.");
         require(branchs[_branchWallet].branchWallet != _branchWallet, "Branch address already registered.");
         require(employees[_branchWallet].employeeWallet != _branchWallet, "Branch address already registered as an employee.");
@@ -98,7 +139,7 @@ contract ServiceProvision {
         //branchs[_branchWallet].branchId = getNextSqBranchId();
        // branchs[_branchWallet].extBranchId = _extBranchId;
         branchs[_branchWallet].extBranchCode = _extBranchCode;
-        branchs[_branchWallet].branchWallet = _branchWallet;
+        branchs[_branchWallet].branchWallet = payable(_branchWallet);
         branchs[_branchWallet].companyWallet = _companyWallet;
         branchCounter++;
     }
@@ -107,15 +148,15 @@ contract ServiceProvision {
     function addEmployee(string memory _extEmployeeCode, address _employeeWallet, address _branchWallet, address _companyWallet) external {
         //Verifica se o empregado vai ser registrado para a filial do sender
         require(msg.sender == _branchWallet, "The sender must be equal the branch wallet.");
-        //Verifica se o sender È uma filial
+        //Verifica se o sender √© uma filial
         require(branchs[msg.sender].branchWallet == _branchWallet, "Only a branch can add an employee.");
-        //verifica se a companhia informada È a mesma da filial
+        //verifica se a companhia informada √© a mesma da filial
         require(branchs[_employeeWallet].companyWallet != _companyWallet, "Branch address already registered as a Company."); 
-        //Verifica se o _employeeWallet j· foi cadastrado em alguma estrutura
+        //Verifica se o _employeeWallet j√° foi cadastrado em alguma estrutura
         require(companys[_employeeWallet].companyWallet != _branchWallet, "Branch address already registered as a Company.");
         require(branchs[_employeeWallet].branchWallet != _branchWallet, "Branch address already registered.");
         require(employees[_employeeWallet].employeeWallet != _branchWallet, "Branch address already registered as an employee.");
-        //N„o verifico na de clientes pois a carteira de um cliente pode a vir a ser a de um funcion·rio um dia
+        //N√£o verifico na de clientes pois a carteira de um cliente pode a vir a ser a de um funcion√°rio um dia
         employees[_employeeWallet].extEmployeeCode = _extEmployeeCode;
         employees[_employeeWallet].employeeWallet = _employeeWallet;
         employees[_employeeWallet].branchWallet = _branchWallet;
@@ -128,7 +169,7 @@ contract ServiceProvision {
     //Only Employees can add a service for his branch
     function addService(string calldata _serviceCode, address _employeeWallet, address  _branchWallet, address _companyWallet, string calldata _requestDate, 
         string memory _scheduledDate, string memory _status, string memory _obs, uint _price)  external {    
-        //verifica se È um empregado È o sender 
+        //verifica se √© um empregado √© o sender 
         require(msg.sender == _employeeWallet,  "The sender must be equal the employee wallet.");                
         //verifica se empregado pertence a filial informada 
         require(employees[_employeeWallet].branchWallet == _branchWallet,  "The employee is not part of the reported branch.");
@@ -152,19 +193,21 @@ contract ServiceProvision {
 
     function updateService(Service memory _service) external {    
 
-        //verifica se o sender È o empregado do serviÁo - N„o pode alterar serviÁos pagos
+        require(services[_service.serviceId].amontPaid != 0, "Can't update the service ultil it's fully paid or canceled.");
+
+        //verifica se o sender √© o empregado do servi√ßo
         if(msg.sender == services[_service.serviceId].employeeWallet) {
-            //o funcionario informado tem que pertencer a branch do serviÁo
+            //o funcionario informado tem que pertencer a branch do servi√ßo
             require(services[_service.serviceId].branchWallet == employees[_service.employeeWallet].branchWallet,  "The employee does not belong to the current branch in the service.");
-            
-            require(services[_service.serviceId].branchWallet == _service.branchWallet,  "Employers can't change the branch in a service.");
+            //verifica se a branch √© 
+            require(services[_service.serviceId].branchWallet == _service.branchWallet,  "Employers can't update the branch in a service.");
 
             require(services[_service.serviceId].companyWallet == _service.companyWallet,  "Employers can't change the company in a service."); 
 
             Service memory tmpSvc;
 
-            //O que o funcion·rio pode atualizar:
-            //(Atualizo sÛ o que mudou)
+            //O que o funcion√°rio pode atualizar:
+            //(Atualizo s√≥ o que mudou)
             if(!compareStrings(services[_service.serviceId].extServiceCode, _service.extServiceCode)){
                 //services[_service.serviceId].extServiceCode = _service.extServiceCode;
                 tmpSvc.extServiceCode =  _service.extServiceCode;
@@ -207,55 +250,80 @@ contract ServiceProvision {
                 services[_service.serviceId].obs = tmpSvc.obs;
                 services[_service.serviceId].price = tmpSvc.price;
                 services[_service.serviceId].waitingPayment = tmpSvc.waitingPayment;
-                }           
+            }           
         }
 
-        //verifica se o sender È a branch do serviÁo
+        //verifica se o sender √© a branch do servi√ßo
         else if(msg.sender == services[_service.serviceId].branchWallet) {
             //verifico se o funcionario informado pertence a branch informada
             require(employees[_service.employeeWallet].branchWallet == _service.branchWallet,  "The informed employee must be part of the informed branch."); 
-            //verifico se a companhia informada È a mesma do serviÁo
-            require(services[_service.serviceId].companyWallet == _service.companyWallet,  "Branchs can't change the company in a service."); 
+            //verifico se a companhia informada √© a mesma do servi√ßo
+            require(services[_service.serviceId].companyWallet == _service.companyWallet,  "Branchs can't change the company in a service.");
+
+            Service memory tmpSvc; 
             
             //O que  a branch pode atualizar:
             if(!compareStrings(services[_service.serviceId].extServiceCode, _service.extServiceCode)){
-                 services[_service.serviceId].extServiceCode = _service.extServiceCode;
+                //services[_service.serviceId].extServiceCode = _service.extServiceCode;
+                tmpSvc.extServiceCode =  _service.extServiceCode;
             }
             if(services[_service.serviceId].employeeWallet != _service.employeeWallet){                          
-                services[_service.serviceId].employeeWallet = _service.employeeWallet;
+                //services[_service.serviceId].employeeWallet = _service.employeeWallet;
+                tmpSvc.extServiceCode =  _service.extServiceCode;
             }
             if(services[_service.serviceId].branchWallet != _service.branchWallet){                          
-                services[_service.serviceId].branchWallet = _service.branchWallet;
+                // services[_service.serviceId].branchWallet = _service.branchWallet;
+                tmpSvc.branchWallet =  _service.branchWallet;
             }
             if(!compareStrings(services[_service.serviceId].scheduledDate, _service.scheduledDate)){
-                 services[_service.serviceId].scheduledDate = _service.scheduledDate;
+                //  services[_service.serviceId].scheduledDate = _service.scheduledDate;
+                 tmpSvc.scheduledDate =  _service.scheduledDate;
             }
             if(!compareStrings(services[_service.serviceId].status, _service.status)){
-                 services[_service.serviceId].status = _service.status;
+                // services[_service.serviceId].status = _service.status;
+                tmpSvc.status =  _service.status;
             }
             if(!compareStrings(services[_service.serviceId].obs, _service.obs)){
-                 services[_service.serviceId].obs = _service.obs;
+                //  services[_service.serviceId].obs = _service.obs;
+                tmpSvc.obs =  _service.obs;
             }
             if(services[_service.serviceId].price != _service.price){
-                services[_service.serviceId].price = _service.price;
+                // services[_service.serviceId].price = _service.price;
+                tmpSvc.price =  _service.price;
             }
-            //Se ainda n„o est· pago, posso alterar para o caso de pagamentos fiat
+            //Se ainda n√£o est√° pago, posso alterar para o caso de pagamentos fiat
             if(services[_service.serviceId].waitingPayment != _service.waitingPayment 
-               && compareStrings(services[_service.serviceId].paidDate, "0x")){  //verifica se = ''
-                services[_service.serviceId].waitingPayment = _service.waitingPayment;
+               && compareStrings(services[_service.serviceId].payday, "0x")){  //verifica se = ''
+                // services[_service.serviceId].waitingPayment = _service.waitingPayment;
+                tmpSvc.waitingPayment =  _service.waitingPayment;
+
             }
-            //sÛ posso considerar pago o que estava aguardando um pagamento.
-            if(!compareStrings(services[_service.serviceId].paidDate, _service.paidDate)
-                && compareStrings(services[_service.serviceId].paidDate, "0x")
+            //s√≥ posso considerar pago o que estava aguardando um pagamento.
+            if(!compareStrings(services[_service.serviceId].payday, _service.payday)
+                && compareStrings(services[_service.serviceId].payday, "0x")
                 && services[_service.serviceId].waitingPayment){   
-                 services[_service.serviceId].paidDate = _service.paidDate;
+                //  services[_service.serviceId].payday = _service.payday;
+                tmpSvc.payday =  _service.payday;
             }
 
-            //Only if all received data were filled we can update the record 
-
-
+            //if all data was validated and filled then update the service
+            if(compareStrings(tmpSvc.extServiceCode, _service.extServiceCode) 
+                && tmpSvc.employeeWallet ==  _service.employeeWallet
+                && tmpSvc.branchWallet == _service.branchWallet
+                && compareStrings(tmpSvc.scheduledDate, _service.scheduledDate)
+                && compareStrings(tmpSvc.status, _service.status)
+                && compareStrings(tmpSvc.obs, _service.obs) 
+                && tmpSvc.price == _service.price
+                && tmpSvc.waitingPayment == _service.waitingPayment){
+                services[_service.serviceId].employeeWallet = tmpSvc.employeeWallet;
+                services[_service.serviceId].scheduledDate = tmpSvc.scheduledDate;
+                services[_service.serviceId].status = tmpSvc.status;
+                services[_service.serviceId].obs = tmpSvc.obs;
+                services[_service.serviceId].price = tmpSvc.price;
+                services[_service.serviceId].waitingPayment = tmpSvc.waitingPayment;
+            }  
         }
-        //verifica se o sender È a company do serviÁo
+        //verifica se o sender √© a company do servi√ßo
         else if(msg.sender == services[_service.serviceId].companyWallet) {
             services[_service.serviceId].extServiceCode =_service.extServiceCode;
             services[_service.serviceId].employeeWallet = _service.employeeWallet;
@@ -266,15 +334,13 @@ contract ServiceProvision {
             services[_service.serviceId].obs = _service.obs; 
             services[_service.serviceId].price = _service.price; 
             services[_service.serviceId].waitingPayment = _service.waitingPayment;
-            services[_service.serviceId].paidDate = _service.paidDate;
-
+            services[_service.serviceId].payday = _service.payday;
         }
-        //verifico se a companhia do funcionario informado È a mesma do cadastro desse funcionario 
+        //verifico se a companhia do funcionario informado √© a mesma do cadastro desse funcionario 
         require(employees[_service.employeeWallet].companyWallet == _service.companyWallet,  "The informed employee must be part of the informed branch."); 
-
-        //o sender tem q ser o empregado atual do serviÁo, caso queira trocar para que outro realize o serviÁo
+        //o sender tem q ser o empregado atual do servi√ßo, caso queira trocar para que outro realize o servi√ßo
         require(msg.sender == services[_service.serviceId].employeeWallet,  "The sender must be equal the actual employee of the service.");  
-        //o endereÁos tem que ser de um funcion·rio da filial e a filial deve pertencer a companhia a qual est· sendo prestado o serviÁo    
+        //o endere√ßos tem que ser de um funcion√°rio da filial e a filial deve pertencer a companhia a qual est√° sendo prestado o servi√ßo    
         require(employees[_service.branchWallet].branchWallet == _service.branchWallet,  "The employee is not part of the reported branch.");
         require(branchs[_service.branchWallet].companyWallet == _service.companyWallet,  "The branch is not part of the reported company.");
         services[_service.serviceId].extServiceCode =_service.extServiceCode;
@@ -289,67 +355,93 @@ contract ServiceProvision {
         serviceCounter++;
     }
 
-    function getCompany(address index) public view returns(Company memory){
-        return companys[index];   
+    function getCompany(address _index) public view returns(Company memory){
+        return companys[_index];   
     }
 
-    function getBranch(address index) public view returns(Branch memory){
-        return branchs[index];   
+    function getBranch(address _index) public view returns(Branch memory){
+        return branchs[_index];   
     }
 
-    function getEmployee(address index) public view returns(Employee memory){
-        return employees[index];   
+    function getEmployee(address _index) public view returns(Employee memory){
+        return employees[_index];   
     }
 
-    function getService(uint256 index) public view returns(Service memory){
-        return services[index];   
+    function getService(uint256 _index) public view returns(Service memory){
+        return services[_index];   
     }
 
     function getTotEmployees() public view returns(uint){
            return employeeCounter;   
     }
 
-    //Outra opÁ„o È vocÍ fazer um for e comparar byte a byte da string, 
-    //j· que a comparaÁ„o direta com sinais de igualdade n„o funciona com a string inteira.
+    //Outra op√ß√£o √© voc√™ fazer um for e comparar byte a byte da string, 
+    //j√° que a compara√ß√£o direta com sinais de igualdade n√£o funciona com a string inteira.
     function compareStrings(string memory a, string memory b) private pure returns (bool)
     {
         return keccak256(bytes(a)) == keccak256(bytes(b));
     }
 
-    //atualizar serviÁo --> 
-    //atualizar serviÁo --> //cancela serviÁo -->
-    //private updateCompany SÛ o owner ou a prÛpria companhia podem atualizar o companycode
+
+    //Receive payments to create a company and so on
+    function addAuthorizedUser(address _newUser) payable external {
+        //verifica o valor pago para se cadastrar
+        require(msg.value != 0.000750 ether,  "You have to pay 0.000750 ETH to be a new user.");    //   +- 1 USD in 20221018
+        //Verifica se o usu√°rio ja est√° cadastrado
+        require(authorizedUsers[_newUser] == _newUser,  "User already registered."); 
+        //Autoriza usu√°rio
+        authorizedUsers[_newUser] = _newUser;
+        //this.balance[msg.sender] += msg.value;
+    }
+
+    function payService (Service calldata _service) external payable{
+        //Verifica se o valor pago √© o valor do servi√ßo
+
+        //
+    }
+
+    //atualizar servi√ßo --> 
+    //atualizar servi√ßo --> //cancela servi√ßo -->
+    //private updateCompany S√≥ o owner ou a pr√≥pria companhia podem atualizar o companycode
     //private updateBranch Se o sender for a branch ou a company, pode atualizar o branchcode
     //getBranchsByCompany   - chamado pela campanhia
     //getEmployeesByBranch
     //getEmployeesByCompany
-    //removerFuncionario    - sÛ a carteira da filial ou da companhia podem remover um funcion·rio
-    //removerBranch         - sÛ a carteira da companhia pode remover o branch
-    //removerCompanhia      - sÛ o owner
-    //reaberturaDeServiÁo
+    //removerFuncionario    - s√≥ a carteira da filial ou da companhia podem remover um funcion√°rio
+    //removerBranch         - s√≥ a carteira da companhia pode remover o branch
+    //removerCompanhia      - s√≥ o owner
+    //reaberturaDeServi√ßo
     //estornoDePagamento
+    //cuponsdedesconto
+    //dividendos
 
-//       OperaÁıes do Sistema:
+
+
+
+//       Opera√ß√µes do Sistema:
 //  OK - AdicionarEmpresa
 //  OK - AdicionarFilial
 //  OK - AdicionarFuncionario
 //     - RemoverEmpresa
 //     - RemoverFilial
 //     - RemoverFuncionario
-//  OK - AgendarServiÁo
+//  OK - AgendarServi√ßo
 //  OK - ConsultarServico
 //  OK - AtualizarServico
-//     - PagarEmpresa
+//     - pagarServi√ßo
+//  OK - pagarNovoUsuario
+//     - 
+
 
 
 //Proteger o sistema contra reentrancia
 
-//o pagameno sÛ deve ser permitido apos autorizado pelo funcionario do serviÁo.
-//funcionarios sÛ podem alterar serviÁos n„o pagos
+//o pagameno s√≥ deve ser permitido apos autorizado pelo funcionario do servi√ßo.
+//funcionarios s√≥ podem alterar servi√ßos n√£o pagos
 
 
 
-    //para economizar,sÛ preciso atualizar os campos que sofreram alteraÁ„o
+    //para economizar,s√≥ preciso atualizar os campos que sofreram altera√ß√£o
     // function editCustomer(uint32 id, Customer memory newCustomer) public {
     // Customer memory oldCustomer = customers[id];
     // if (bytes(oldCustomer.name).length == 0) return;
@@ -364,15 +456,14 @@ contract ServiceProvision {
     // }
 
 
-//È melhor que o custo do AGENDAMENTO fique por conta da confirmaÁ„o do funcion·rio do que para o cliente. Leva a empresa a zelar pelo serviÁo prestado.
+//√© melhor que o custo do AGENDAMENTO fique por conta da confirma√ß√£o do funcion√°rio do que para o cliente. Leva a empresa a zelar pelo servi√ßo prestado.
 
-//solicitaÁ„o de
-// 1 - O agendamento È registrado pela wallet do funcionario quando ele confirma que poder· atender o serviÁo
-// 2 - Somente o cliente ou o funcionario do serviÁo ou a companhia do servico podem Cancelar um servico agendado, pagando apenas a taxa de transacao da rede e evitando assim o abuso do servico
+//solicita√ß√£o de
+// 1 - O agendamento √© registrado pela wallet do funcionario quando ele confirma que poder√° atender o servi√ßo
+// 2 - Somente o cliente ou o funcionario do servi√ßo ou a companhia do servico podem Cancelar um servico agendado, pagando apenas a taxa de transacao da rede e evitando assim o abuso do servico
 // 3 - O funcionario informado no Servico deve ser um funcionario da companhia do servico 
 
-
-
+//Ser√° que √© melhor cobrar a utiliza√ß√£o do sistema 1 USD por wallet de funcion√°rio cadastrado?
 
 }
 
