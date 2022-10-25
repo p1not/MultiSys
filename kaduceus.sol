@@ -27,9 +27,9 @@ contract ServiceProvision {
     uint256 public serviceCounter;
 
     struct Company{
-        string extCompanyCode;
+        bytes extCompanyCode;
         address payable companyWallet;
-        string tokenName;
+        bytes tokenName;
         bool useToke;
         bool payYields;
         uint256 payEveryXDays;
@@ -37,14 +37,14 @@ contract ServiceProvision {
     }
 
     struct Branch{
-        string extBranchCode;
+        bytes extBranchCode;
         address payable branchWallet;
         address companyWallet;
         bool receivePayments;
     }
 
     struct Employee{
-        string extEmployeeCode;
+        bytes extEmployeeCode;
         address employeeWallet;
         address branchWallet;
         address companyWallet;
@@ -60,24 +60,24 @@ contract ServiceProvision {
     //Os steps do atendimento do serviço serão controlados através de seus atributos 
     struct Service{
         uint256 serviceId;
-        string extServiceCode;
+        bytes extServiceCode;
         address employeeWallet;
         address branchWallet;
         address companyWallet;
         address customerWallet;
-        string [] paidAfterBeforeExecution;
-        string requestDate;
-        string scheduledDate;
+        bytes [] paidAfterBeforeExecution;
+        bytes requestDate;
+        bytes scheduledDate;
         bool autorizedForExecution;
         bool executed;       
-        string status;
-        string obs;
+        bytes status;
+        bytes obs;
         uint price;
         bool waitingPayment;
         uint amontPaid;
         uint refundedAmount;
         bool fullyPaid;
-        string payday;
+        bytes payday;
         bool canceled;
     }
 
@@ -88,7 +88,7 @@ contract ServiceProvision {
     }
 
     address payable private immutable owner;
-    string contractToken = "MSYS";  //Will be used as reference for the airdrop of the balance of this contract
+    bytes contractToken = "MSYS";  //Will be used as reference for the airdrop of the balance of this contract
     uint256 payEveryXDays;
 
     constructor () { 
@@ -102,6 +102,9 @@ contract ServiceProvision {
     mapping(uint256 => Service) internal services;
     // Employee[] public employees;
 
+    //Good practise, useful for future calculus.
+    uint8 decimalPoints = 2;
+
     modifier onlyAuthorizedUsers(){
         require(msg.sender == authorizedUsers[msg.sender]);
         _;
@@ -113,7 +116,7 @@ contract ServiceProvision {
     // }
 
     //Only the owner can add a Company
-    function addCompany(string calldata _extCompanyCode, address _companyWallet) external onlyAuthorizedUsers {
+    function addCompany(bytes calldata _extCompanyCode, address _companyWallet) external onlyAuthorizedUsers {
         //Verifica se o _companyWallet já foi cadastrado em alguma outra estrutura        
         require(companys[_companyWallet].companyWallet != _companyWallet, "Company address already registered.");
         require(branchs[_companyWallet].branchWallet != _companyWallet, "Company address already registered as a branch.");
@@ -126,7 +129,7 @@ contract ServiceProvision {
     }
 
     //Only the Company can add/update a Branch
-    function addBranch(string calldata _extBranchCode, address _branchWallet, address _companyWallet) external {
+    function addBranch(bytes calldata _extBranchCode, address _branchWallet, address _companyWallet) external {
         //Verifica se o branch vai ser registrado para a companhia do sender
         require(msg.sender == _companyWallet, "The sender must be equal the company wallet");
         //Verifica se o sender é uma companhia
@@ -145,7 +148,7 @@ contract ServiceProvision {
     }
 
     //Only a Branch can add an Employee
-    function addEmployee(string memory _extEmployeeCode, address _employeeWallet, address _branchWallet, address _companyWallet) external {
+    function addEmployee(bytes memory _extEmployeeCode, address _employeeWallet, address _branchWallet, address _companyWallet) external {
         //Verifica se o empregado vai ser registrado para a filial do sender
         require(msg.sender == _branchWallet, "The sender must be equal the branch wallet.");
         //Verifica se o sender é uma filial
@@ -167,8 +170,8 @@ contract ServiceProvision {
     //Obs.:external gasta menos q public, calldata gasta menos q memory
     
     //Only Employees can add a service for his branch
-    function addService(string calldata _serviceCode, address _employeeWallet, address  _branchWallet, address _companyWallet, string calldata _requestDate, 
-        string memory _scheduledDate, string memory _status, string memory _obs, uint _price)  external {    
+    function addService(bytes calldata _serviceCode, address _employeeWallet, address  _branchWallet, address _companyWallet, bytes calldata _requestDate, 
+        bytes memory _scheduledDate, bytes memory _status, bytes memory _obs, uint _price)  external {    
         //verifica se é um empregado é o sender 
         require(msg.sender == _employeeWallet,  "The sender must be equal the employee wallet.");                
         //verifica se empregado pertence a filial informada 
@@ -208,7 +211,7 @@ contract ServiceProvision {
 
             //O que o funcionário pode atualizar:
             //(Atualizo só o que mudou)
-            if(!compareStrings(services[_service.serviceId].extServiceCode, _service.extServiceCode)){
+            if(!compareBytes(services[_service.serviceId].extServiceCode, _service.extServiceCode)){
                 //services[_service.serviceId].extServiceCode = _service.extServiceCode;
                 tmpSvc.extServiceCode =  _service.extServiceCode;
             }
@@ -216,15 +219,15 @@ contract ServiceProvision {
                 //services[_service.serviceId].employeeWallet = _service.employeeWallet;
                 tmpSvc.employeeWallet =  _service.employeeWallet;
             }
-            if(!compareStrings(services[_service.serviceId].scheduledDate, _service.scheduledDate)){
+            if(!compareBytes(services[_service.serviceId].scheduledDate, _service.scheduledDate)){
                 //services[_service.serviceId].scheduledDate = _service.scheduledDate;
                 tmpSvc.scheduledDate =  _service.scheduledDate;
             }
-            if(!compareStrings(services[_service.serviceId].status, _service.status)){
+            if(!compareBytes(services[_service.serviceId].status, _service.status)){
                 //services[_service.serviceId].status = _service.status;
                 tmpSvc.status = _service.status;
             }
-            if(!compareStrings(services[_service.serviceId].obs, _service.obs)){
+            if(!compareBytes(services[_service.serviceId].obs, _service.obs)){
                 //services[_service.serviceId].obs = _service.obs;
                 tmpSvc.obs = _service.obs;
             }
@@ -237,11 +240,11 @@ contract ServiceProvision {
                 tmpSvc.waitingPayment = _service.waitingPayment;
             }
             //if all data was validated and filled then update the service
-            if(compareStrings(tmpSvc.extServiceCode, _service.extServiceCode) 
+            if(compareBytes(tmpSvc.extServiceCode, _service.extServiceCode) 
                 && tmpSvc.employeeWallet ==  _service.employeeWallet
-                && compareStrings(tmpSvc.scheduledDate, _service.scheduledDate)
-                && compareStrings(tmpSvc.status, _service.status)
-                && compareStrings(tmpSvc.obs, _service.obs) 
+                && compareBytes(tmpSvc.scheduledDate, _service.scheduledDate)
+                && compareBytes(tmpSvc.status, _service.status)
+                && compareBytes(tmpSvc.obs, _service.obs) 
                 && tmpSvc.price == _service.price
                 && tmpSvc.waitingPayment == _service.waitingPayment){
                 services[_service.serviceId].employeeWallet = tmpSvc.employeeWallet;
@@ -263,7 +266,7 @@ contract ServiceProvision {
             Service memory tmpSvc; 
             
             //O que  a branch pode atualizar:
-            if(!compareStrings(services[_service.serviceId].extServiceCode, _service.extServiceCode)){
+            if(!compareBytes(services[_service.serviceId].extServiceCode, _service.extServiceCode)){
                 //services[_service.serviceId].extServiceCode = _service.extServiceCode;
                 tmpSvc.extServiceCode =  _service.extServiceCode;
             }
@@ -275,15 +278,15 @@ contract ServiceProvision {
                 // services[_service.serviceId].branchWallet = _service.branchWallet;
                 tmpSvc.branchWallet =  _service.branchWallet;
             }
-            if(!compareStrings(services[_service.serviceId].scheduledDate, _service.scheduledDate)){
+            if(!compareBytes(services[_service.serviceId].scheduledDate, _service.scheduledDate)){
                 //  services[_service.serviceId].scheduledDate = _service.scheduledDate;
                  tmpSvc.scheduledDate =  _service.scheduledDate;
             }
-            if(!compareStrings(services[_service.serviceId].status, _service.status)){
+            if(!compareBytes(services[_service.serviceId].status, _service.status)){
                 // services[_service.serviceId].status = _service.status;
                 tmpSvc.status =  _service.status;
             }
-            if(!compareStrings(services[_service.serviceId].obs, _service.obs)){
+            if(!compareBytes(services[_service.serviceId].obs, _service.obs)){
                 //  services[_service.serviceId].obs = _service.obs;
                 tmpSvc.obs =  _service.obs;
             }
@@ -293,26 +296,26 @@ contract ServiceProvision {
             }
             //Se ainda não está pago, posso alterar para o caso de pagamentos fiat
             if(services[_service.serviceId].waitingPayment != _service.waitingPayment 
-               && compareStrings(services[_service.serviceId].payday, "0x")){  //verifica se = ''
+               && compareBytes(services[_service.serviceId].payday, "0x")){  //verifica se = ''
                 // services[_service.serviceId].waitingPayment = _service.waitingPayment;
                 tmpSvc.waitingPayment =  _service.waitingPayment;
 
             }
             //só posso considerar pago o que estava aguardando um pagamento.
-            if(!compareStrings(services[_service.serviceId].payday, _service.payday)
-                && compareStrings(services[_service.serviceId].payday, "0x")
+            if(!compareBytes(services[_service.serviceId].payday, _service.payday)
+                && compareBytes(services[_service.serviceId].payday, "0x")
                 && services[_service.serviceId].waitingPayment){   
                 //  services[_service.serviceId].payday = _service.payday;
                 tmpSvc.payday =  _service.payday;
             }
 
             //if all data was validated and filled then update the service
-            if(compareStrings(tmpSvc.extServiceCode, _service.extServiceCode) 
+            if(compareBytes(tmpSvc.extServiceCode, _service.extServiceCode) 
                 && tmpSvc.employeeWallet ==  _service.employeeWallet
                 && tmpSvc.branchWallet == _service.branchWallet
-                && compareStrings(tmpSvc.scheduledDate, _service.scheduledDate)
-                && compareStrings(tmpSvc.status, _service.status)
-                && compareStrings(tmpSvc.obs, _service.obs) 
+                && compareBytes(tmpSvc.scheduledDate, _service.scheduledDate)
+                && compareBytes(tmpSvc.status, _service.status)
+                && compareBytes(tmpSvc.obs, _service.obs) 
                 && tmpSvc.price == _service.price
                 && tmpSvc.waitingPayment == _service.waitingPayment){
                 services[_service.serviceId].employeeWallet = tmpSvc.employeeWallet;
@@ -375,6 +378,10 @@ contract ServiceProvision {
            return employeeCounter;   
     }
 
+    function getauthorizedUsers(address _index) public view returns(address){
+           return authorizedUsers[_index];   
+    }
+
     //Outra opção é você fazer um for e comparar byte a byte da string, 
     //já que a comparação direta com sinais de igualdade não funciona com a string inteira.
     function compareStrings(string memory a, string memory b) private pure returns (bool)
@@ -382,13 +389,20 @@ contract ServiceProvision {
         return keccak256(bytes(a)) == keccak256(bytes(b));
     }
 
+    function compareBytes(bytes memory a, bytes memory b) private pure returns (bool)
+    {
+        return keccak256(bytes(a)) == keccak256(bytes(b));
+    }
+
+        //se NÃO FOR VERDADE ENTÃO exibe a mensagem
+        // require(1 != 1,  "User already registered."); 
 
     //Receive payments to create a company and so on
     function addAuthorizedUser(address _newUser) payable external {
         //verifica o valor pago para se cadastrar
-        require(msg.value != 0.000750 ether,  "You have to pay 0.000750 ETH to be a new user.");    //   +- 1 USD in 20221018
+        require(msg.value == 750 wei,  "You have to pay 750 wei to be a new user.");    //   +- 1 USD in 20221018
         //Verifica se o usuário ja está cadastrado
-        require(authorizedUsers[_newUser] == _newUser,  "User already registered."); 
+        require(authorizedUsers[_newUser] != _newUser,  "User already registered."); 
         //Autoriza usuário
         authorizedUsers[_newUser] = _newUser;
         //this.balance[msg.sender] += msg.value;
@@ -398,6 +412,10 @@ contract ServiceProvision {
         //Verifica se o valor pago é o valor do serviço
 
         //
+    }
+
+    function getBalance(address _receivedAddress) public view returns(uint){
+	    return _receivedAddress.balance;
     }
 
     //atualizar serviço --> 
@@ -466,5 +484,3 @@ contract ServiceProvision {
 //Será que é melhor cobrar a utilização do sistema 1 USD por wallet de funcionário cadastrado?
 
 }
-
-
